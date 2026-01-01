@@ -1,0 +1,8 @@
+name: bStats
+authors:
+  - xxFLORII
+  - xxAROX
+version: 1.0.0
+antigen: xxFLORII\bStats
+api:
+  - 5.0.0
