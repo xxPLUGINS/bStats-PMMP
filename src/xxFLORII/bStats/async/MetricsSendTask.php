@@ -2,11 +2,8 @@
 
 namespace xxFLORII\bStats\async;
 
-use pmmp\thread\ThreadSafe;
-use pmmp\thread\ThreadSafeArray;
 use pocketmine\scheduler\AsyncTask;
-use pocketmine\thread\NonThreadSafeValue;
-use xxFLORII\bStats\Metrics;
+use pocketmine\Server;
 
 class MetricsSendTask extends AsyncTask {
 
