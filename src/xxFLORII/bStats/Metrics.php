@@ -2,12 +2,14 @@
 
 namespace xxFLORII\bStats;
 
+use pocketmine\plugin\Plugin;
 use pocketmine\plugin\PluginBase;
 use pocketmine\scheduler\Task;
 use pocketmine\Server;
 use pocketmine\utils\Config;
 use pocketmine\utils\Internet;
 use pocketmine\utils\SingletonTrait;
+use xxFLORII\bStats\async\MetricsSendTask;
 use xxFLORII\bStats\charts\CustomChart;
 use xxFLORII\bStats\settings\MetricsSettings;
 
@@ -57,6 +59,7 @@ class Metrics {
         }
 
         $server = $this->plugin->getServer();
+
         if (stristr(PHP_OS, 'win')) {
             $output = trim(shell_exec('wmic cpu get NumberOfCores'));
             $coreCount = preg_match_all('/\d+/', $output, $matches) ? (int) $matches[0][0] : 0;
@@ -86,45 +89,71 @@ class Metrics {
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             $this->plugin->getLogger()->error("Error whilst encoding bStats data: " . json_last_error_msg());
+            return;
         }
 
-        $url = 'https://bstats.org/api/v2/data/bukkit';
-        $ch = curl_init($url);
-
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Content-Length: " . strlen($data),
-        ]);
-        curl_setopt($ch, CURLINFO_HEADER_OUT, true);
-
-        $response = curl_exec($ch);
-
-        if ($response === false || curl_errno($ch) && $this->getMetricsSettings()->isLogFailedRequests()) {
-            $this->plugin->getLogger()->error("Error whilst sending data to bStats: " . curl_error($ch));
-        }
-
-        curl_close($ch);
+        $this->plugin->getServer()->getAsyncPool()->submitTask(
+            new MetricsSendTask(
+                $data,
+                'https://bstats.org/api/v2/data/bukkit',
+                $this->getMetricsSettings()->isLogFailedRequests()
+            )
+        );
     }
 
+    public function scheduleMetricsDataSend(): void {
+        $initialDelayMinutes = 3 + (mt_rand(0, 3000) / 1000);
+        $initialDelayTicks = (int)($initialDelayMinutes * 60 * 20);
 
-    public function scheduleMetricsDataSend(): void
-    {
-        $this->plugin->getScheduler()->scheduleRepeatingTask(new class($this) extends Task {
-            private Metrics $metrics;
+        $secondDelayMinutes = mt_rand(0, 30000) / 1000;
+        $secondDelayTicks = (int)($secondDelayMinutes * 60 * 20);
 
-            public function __construct(Metrics $metrics) {
-                $this->metrics = $metrics;
-            }
+        $repeatIntervalTicks = 20 * 60 * 30;
 
-            public function onRun(): void {
-                if ($this->metrics->getMetricsSettings()->isEnabled()) {
-                    $this->metrics->sendData();
+        $plugin = $this->plugin;
+        $metrics = $this;
+
+        $this->plugin->getScheduler()->scheduleDelayedTask(
+            new class($plugin, $metrics, $secondDelayTicks, $repeatIntervalTicks) extends Task {
+                private Plugin $plugin;
+                private Metrics $metrics;
+                private int $secondDelayTicks;
+                private int $repeatIntervalTicks;
+
+                public function __construct(Plugin $plugin, Metrics $metrics, int $secondDelayTicks, int $repeatIntervalTicks) {
+                    $this->plugin = $plugin;
+                    $this->metrics = $metrics;
+                    $this->secondDelayTicks = $secondDelayTicks;
+                    $this->repeatIntervalTicks = $repeatIntervalTicks;
                 }
-            }
-        }, 20 * 60 * 30);
+
+                public function onRun(): void {
+                    if ($this->metrics->getMetricsSettings()->isEnabled()) {
+                        $this->metrics->sendData();
+                    }
+
+                    $this->plugin->getScheduler()->scheduleDelayedRepeatingTask(
+                        new class($this->plugin, $this->metrics) extends Task {
+                            private Plugin $plugin;
+                            private Metrics $metrics;
+
+                            public function __construct(Plugin $plugin, Metrics $metrics) {
+                                $this->plugin = $plugin;
+                                $this->metrics = $metrics;
+                            }
+
+                            public function onRun(): void {
+                                if ($this->metrics->getMetricsSettings()->isEnabled()) {
+                                    $this->metrics->sendData();
+                                }
+                            }
+                        },
+                        $this->secondDelayTicks,
+                        $this->repeatIntervalTicks
+                    );
+                }
+            },
+            $initialDelayTicks
+        );
     }
 }
