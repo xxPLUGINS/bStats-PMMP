@@ -1,5 +1,6 @@
 {
   "name": "xxplugins/bstats-pmmp",
+  "license": "Apache-2.0",
   "require": {
     "pocketmine/pocketmine-mp": "^5.0.0",
     "php": "^8.1"
